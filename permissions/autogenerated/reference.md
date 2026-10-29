@@ -12,6 +12,7 @@ Allows setting active state, configuring tools, and clearing drawing.
 - `allow-set-excluded-rects`
 - `allow-configure-tools`
 - `allow-sync-undo-redo`
+- `allow-ack-rendered`
 - `allow-register-listener`
 - `allow-remove-listener`
 
@@ -23,6 +24,32 @@ Allows setting active state, configuring tools, and clearing drawing.
 <th>Description</th>
 </tr>
 
+
+<tr>
+<td>
+
+`pencilkit:allow-ack-rendered`
+
+</td>
+<td>
+
+Enables the ack_rendered command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`pencilkit:deny-ack-rendered`
+
+</td>
+<td>
+
+Denies the ack_rendered command without any pre-configured scope.
+
+</td>
+</tr>
 
 <tr>
 <td>

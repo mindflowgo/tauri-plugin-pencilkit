@@ -9,11 +9,18 @@ const COMMANDS: &[&str] = &[
     "set_excluded_rects",
     "configure_tools",
     "sync_undo_redo",
+    "ack_rendered",
     "register_listener",
     "remove_listener",
 ];
 
 fn main() {
+    // Swift sources are compiled into the crate via swift-rs, which cargo cannot
+    // track; force the build script to re-run when they change so stale Swift
+    // never silently ships in a cached build.
+    println!("cargo:rerun-if-changed=ios/Sources/PencilKitPlugin.swift");
+    println!("cargo:rerun-if-changed=ios/Package.swift");
+
     let result = tauri_plugin::Builder::new(COMMANDS)
         .global_api_script_path("./api-iife.js")
         .ios_path("ios")

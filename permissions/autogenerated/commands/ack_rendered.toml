@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-ack-rendered"
+description = "Enables the ack_rendered command without any pre-configured scope."
+commands.allow = ["ack_rendered"]
+
+[[permission]]
+identifier = "deny-ack-rendered"
+description = "Denies the ack_rendered command without any pre-configured scope."
+commands.deny = ["ack_rendered"]

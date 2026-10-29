@@ -97,6 +97,12 @@ fn sync_undo_redo() -> Result<(), String> {
 
 #[cfg(not(target_os = "ios"))]
 #[tauri::command]
+fn ack_rendered(_ids: Vec<String>) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "ios"))]
+#[tauri::command]
 fn register_listener() -> Result<(), String> {
     Ok(())
 }
@@ -122,6 +128,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             set_excluded_rects,
             configure_tools,
             sync_undo_redo,
+            ack_rendered,
             register_listener,
             remove_listener,
         ]);

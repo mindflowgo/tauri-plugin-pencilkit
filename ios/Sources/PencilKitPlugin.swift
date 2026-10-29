@@ -101,25 +101,21 @@ public class PassthroughPKCanvasView: PKCanvasView {
         // Tapping the Markup/Done button, Back, Tabs, or Zoom menu passes through to WKWebView.
         let topCutoff = max(self.topChromeHeight, self.safeAreaInsets.top)
         if point.y <= topCutoff {
-            plugin?.commitAndClearScratchpad(self)
             return false
         }
 
         // 2. Never capture touches over registered active popovers, dialogs, or dropdowns
         for rect in excludedRects {
             if rect.contains(point) {
-                plugin?.commitAndClearScratchpad(self)
                 return false
             }
         }
 
-        // 3. Finger touches pass through to the underlying WKWebView for scrolling.
-        // Flush any pending scratchpad strokes immediately so they move with the document.
+        // 3. Finger touches pass through to the underlying WKWebView for scrolling and tapping.
+        // Strokes remain visible on PKCanvasView until the web SVG layer renders and acknowledges them.
         if let touches = event?.allTouches, !touches.isEmpty {
             let hasPencil = touches.contains(where: { $0.type == .pencil })
             if !hasPencil {
-                // All touches are fingers: pass through to WKWebView for one/two-finger scroll
-                plugin?.commitAndClearScratchpad(self)
                 return false
             } else {
                 // Apple Pencil touch down: synchronously halt any pending commit timer
@@ -205,10 +201,20 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
 
     // Scratchpad idle debounce commit state:
     // While writing in quick succession, strokes accumulate smoothly in PKCanvasView.
-    // When writing pauses (1.0s idle), all accumulated strokes are exported and the scratchpad is cleared.
+    // When writing pauses (1.0s idle), pending strokes are exported and retained until WebKit acknowledges paint.
     private var isCurrentlyDrawing: Bool = false
     private var commitTimer: Timer?
+    private var failsafeTimer: Timer?
     private let commitDelay: TimeInterval = 1.0
+
+    private struct TrackedScratchpadStroke {
+        let id: String
+        let creationDate: Date
+        var isExported: Bool
+        var isAcknowledged: Bool
+        var exportedAt: TimeInterval
+    }
+    private var trackedStrokes: [TrackedScratchpadStroke] = []
 
     public override func load(webview: WKWebView) {
         self.webView = webview
@@ -420,6 +426,18 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
 
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
+
+            // Scratchpad: flush and purge ONLY on real transitions (deactivation
+            // or document change). The web layer re-sends set_active on routine
+            // state syncs (tool/color tweaks, undo availability); purging there
+            // would blank unacknowledged strokes before the SVG layer renders.
+            let previousFile = self.currentFile
+            if !active || file != previousFile {
+                if let canvas = self.canvasView {
+                    self.flushAndPurgeScratchpad(canvas)
+                }
+            }
+
             self.isPencilModeActive = active
             self.currentFile = file
             self.currentAuthorWidth = authorWidth > 0 ? CGFloat(authorWidth) : 800.0
@@ -473,8 +491,6 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
                 )
             }
 
-            // Scratchpad: flush and commit any pending strokes before mode/document change
-            self.commitAndClearScratchpad(canvas)
             invoke.resolve()
         }
     }
@@ -505,8 +521,6 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
                 invoke.resolve()
                 return
             }
-
-            self.commitAndClearScratchpad(canvas)
 
             self.activeMarkupTool = toolName
             self.activeMarkupColor = colorName
@@ -555,10 +569,10 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
     @objc public func clear(_ invoke: Invoke) throws {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            self.commitTimer?.invalidate()
-            self.commitTimer = nil
-            self.canvasView?.drawing = PKDrawing()
-            invoke.resolve()
+            if let canvas = self.canvasView {
+                self.flushAndPurgeScratchpad(canvas)
+            }
+            invoke.resolve(["success": true])
         }
     }
 
@@ -591,19 +605,39 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
         }
     }
 
+    @objc public func ackRendered(_ invoke: Invoke) throws {
+        let args = try invoke.getArgs()
+        let ackIds = Set(args["ids"] as? [String] ?? [])
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, let canvas = self.canvasView else {
+                invoke.resolve(["success": true])
+                return
+            }
+            if !ackIds.isEmpty {
+                for i in 0..<self.trackedStrokes.count {
+                    if ackIds.contains(self.trackedStrokes[i].id) {
+                        self.trackedStrokes[i].isAcknowledged = true
+                    }
+                }
+            }
+            self.reconcileCanvasDrawing(canvas)
+            invoke.resolve(["success": true])
+        }
+    }
+
     private var lastUndoTimestamp: TimeInterval = 0
 
     public func handleNativeUndo(source: String = "toolbar") {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            let now = Date().timeIntervalSince1970
+            let now = ProcessInfo.processInfo.systemUptime
             if now - self.lastUndoTimestamp < 0.15 {
                 return
             }
             self.lastUndoTimestamp = now
 
             if let canvas = self.canvasView {
-                self.commitAndClearScratchpad(canvas)
+                self.flushAndPurgeScratchpad(canvas)
             }
 
             let dict: [String: Any] = ["source": source]
@@ -618,7 +652,7 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
             guard let self = self else { return }
 
             if let canvas = self.canvasView {
-                self.commitAndClearScratchpad(canvas)
+                self.flushAndPurgeScratchpad(canvas)
             }
 
             let dict: [String: Any] = [:]
@@ -658,6 +692,8 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
     public func canvasViewDidEndUsingTool(_ canvasView: PKCanvasView) {
         guard isPencilModeActive else { return }
         isCurrentlyDrawing = false
+        // Reconcile any strokes that were acknowledged while the pencil was actively drawing
+        reconcileCanvasDrawing(canvasView)
         scheduleCommitTimer(for: canvasView)
     }
 
@@ -669,17 +705,25 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
     }
 
     private func scheduleCommitTimer(for canvasView: PKCanvasView) {
+        let strokes = canvasView.drawing.strokes
+        guard !strokes.isEmpty else { return }
+
+        let alreadyExportedDates = Set(trackedStrokes.map { $0.creationDate })
+        let hasUnexportedStrokes = strokes.contains { !alreadyExportedDates.contains($0.path.creationDate) }
+        guard hasUnexportedStrokes else { return }
+
         commitTimer?.invalidate()
         commitTimer = Timer.scheduledTimer(withTimeInterval: commitDelay, repeats: false) { [weak self, weak canvasView] _ in
             guard let self = self, let canvas = canvasView else { return }
             guard !self.isCurrentlyDrawing else { return }
-            self.commitAndClearScratchpad(canvas)
+            self.commitPendingStrokes(canvas)
         }
     }
 
-    /// Commits all strokes on the scratchpad to the web annotation store and clears the canvas.
-    /// Safely guarded: never clears while the user is actively drawing a stroke.
-    func commitAndClearScratchpad(_ canvasView: PKCanvasView) {
+    /// Exports all pending strokes on the scratchpad to the web annotation store.
+    /// Strokes remain visible on PKCanvasView so there is NO blank gap.
+    /// WebKit acknowledges receipt after SVG paint, which removes the stroke seamlessly.
+    func commitPendingStrokes(_ canvasView: PKCanvasView) {
         commitTimer?.invalidate()
         commitTimer = nil
 
@@ -688,29 +732,117 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
         let strokes = canvasView.drawing.strokes
         guard !strokes.isEmpty else { return }
 
+        let alreadyExportedDates = Set(trackedStrokes.map { $0.creationDate })
+        var newlyExported = false
+
         for stroke in strokes {
+            if alreadyExportedDates.contains(stroke.path.creationDate) {
+                continue
+            }
+
+            let strokeId = UUID().uuidString
             let strokeData = exportStroke(
                 stroke,
+                id: strokeId,
                 file: currentFile,
                 authorWidth: currentAuthorWidth,
                 targetWidth: currentTargetWidth,
                 targetRect: currentTargetRect
             )
             if strokeData.isEmpty { continue }
+
+            let tracked = TrackedScratchpadStroke(
+                id: strokeId,
+                creationDate: stroke.path.creationDate,
+                isExported: true,
+                isAcknowledged: false,
+                exportedAt: ProcessInfo.processInfo.systemUptime
+            )
+            trackedStrokes.append(tracked)
+            newlyExported = true
+
             if let jsObj = JSTypes.coerceDictionaryToJSObject(strokeData) {
                 self.trigger("pencilkit:stroke-drawn", data: jsObj)
             }
         }
 
+        if newlyExported {
+            scheduleFailsafeTimer(for: canvasView)
+        }
+    }
+
+    /// Reconciles native scratchpad strokes: removes acknowledged strokes from PKCanvasView
+    /// ONLY when the user is not actively drawing. If the user is drawing, reconciliation is
+    /// deferred until canvasViewDidEndUsingTool to prevent disrupting active gestures.
+    func reconcileCanvasDrawing(_ canvas: PKCanvasView) {
+        guard !isCurrentlyDrawing else { return }
+
+        let ackDates = Set(trackedStrokes.filter { $0.isAcknowledged }.map { $0.creationDate })
+        guard !ackDates.isEmpty else { return }
+
+        let currentStrokes = canvas.drawing.strokes
+        let remainingStrokes = currentStrokes.filter { !ackDates.contains($0.path.creationDate) }
+
+        if remainingStrokes.count != currentStrokes.count {
+            canvas.drawing = PKDrawing(strokes: remainingStrokes)
+        }
+
+        trackedStrokes.removeAll { $0.isAcknowledged }
+    }
+
+    /// Immediately exports any unexported strokes and forcibly purges the scratchpad.
+    /// Used when switching modes, switching documents, undoing/redoing, changing tools,
+    /// or when a finger scroll begins so strokes don't float over moving text.
+    func flushAndPurgeScratchpad(_ canvasView: PKCanvasView) {
+        commitTimer?.invalidate()
+        commitTimer = nil
+        failsafeTimer?.invalidate()
+        failsafeTimer = nil
+
+        let strokes = canvasView.drawing.strokes
+        if !strokes.isEmpty {
+            let alreadyExportedDates = Set(trackedStrokes.map { $0.creationDate })
+            for stroke in strokes {
+                if alreadyExportedDates.contains(stroke.path.creationDate) {
+                    continue
+                }
+                let strokeId = UUID().uuidString
+                let strokeData = exportStroke(
+                    stroke,
+                    id: strokeId,
+                    file: currentFile,
+                    authorWidth: currentAuthorWidth,
+                    targetWidth: currentTargetWidth,
+                    targetRect: currentTargetRect
+                )
+                if strokeData.isEmpty { continue }
+                if let jsObj = JSTypes.coerceDictionaryToJSObject(strokeData) {
+                    self.trigger("pencilkit:stroke-drawn", data: jsObj)
+                }
+            }
+        }
+
+        trackedStrokes.removeAll()
         canvasView.drawing = PKDrawing()
+    }
+
+    private func scheduleFailsafeTimer(for canvasView: PKCanvasView) {
+        failsafeTimer?.invalidate()
+        failsafeTimer = Timer.scheduledTimer(withTimeInterval: 8.0, repeats: false) { [weak self, weak canvasView] _ in
+            guard let self = self, let canvas = canvasView else { return }
+            guard !self.isCurrentlyDrawing else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            for i in 0..<self.trackedStrokes.count {
+                if self.trackedStrokes[i].isExported && (now - self.trackedStrokes[i].exportedAt >= 7.0) {
+                    self.trackedStrokes[i].isAcknowledged = true
+                }
+            }
+            self.reconcileCanvasDrawing(canvas)
+        }
     }
 
     // MARK: - PKToolPickerObserver
     public func toolPickerSelectedToolDidChange(_ toolPicker: PKToolPicker) {
-        if let canvas = self.canvasView {
-            self.commitAndClearScratchpad(canvas)
-        }
-
         let tool = toolPicker.selectedTool
         var toolName = "marker"
         var colorName = self.activeMarkupColor
@@ -778,7 +910,7 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
         // commit any remaining strokes and turn off markup mode in the web UI.
         if !toolPicker.isVisible && isPencilModeActive {
             if let canvas = self.canvasView {
-                self.commitAndClearScratchpad(canvas)
+                self.flushAndPurgeScratchpad(canvas)
             }
             self.isPencilModeActive = false
             self.canvasView?.isPencilActive = false
@@ -800,6 +932,7 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
     // MARK: - Stroke Conversion (Apple Official APIs)
     private func exportStroke(
         _ stroke: PKStroke,
+        id: String = UUID().uuidString,
         file: String,
         authorWidth: CGFloat,
         targetWidth: CGFloat,
@@ -956,7 +1089,7 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
         let resolvedColor = mapColorToMarkup(stroke.ink.color)
 
         var strokeDict: [String: Any] = [
-            "id": UUID().uuidString,
+            "id": id,
             "file": file,
             "tool": resolvedTool,
             "color": resolvedColor,

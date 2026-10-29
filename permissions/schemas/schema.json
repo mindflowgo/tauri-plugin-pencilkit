@@ -295,6 +295,18 @@
       "type": "string",
       "oneOf": [
         {
+          "description": "Enables the ack_rendered command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-ack-rendered",
+          "markdownDescription": "Enables the ack_rendered command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the ack_rendered command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-ack-rendered",
+          "markdownDescription": "Denies the ack_rendered command without any pre-configured scope."
+        },
+        {
           "description": "Enables the clear command without any pre-configured scope.",
           "type": "string",
           "const": "allow-clear",
@@ -403,10 +415,10 @@
           "markdownDescription": "Denies the sync_undo_redo command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the PencilKit plugin.\nAllows setting active state, configuring tools, and clearing drawing.\n\n#### This default permission set includes:\n\n- `allow-is-available`\n- `allow-set-active`\n- `allow-set-tool`\n- `allow-clear`\n- `allow-set-excluded-rects`\n- `allow-configure-tools`\n- `allow-sync-undo-redo`\n- `allow-register-listener`\n- `allow-remove-listener`",
+          "description": "Default permissions for the PencilKit plugin.\nAllows setting active state, configuring tools, and clearing drawing.\n\n#### This default permission set includes:\n\n- `allow-is-available`\n- `allow-set-active`\n- `allow-set-tool`\n- `allow-clear`\n- `allow-set-excluded-rects`\n- `allow-configure-tools`\n- `allow-sync-undo-redo`\n- `allow-ack-rendered`\n- `allow-register-listener`\n- `allow-remove-listener`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the PencilKit plugin.\nAllows setting active state, configuring tools, and clearing drawing.\n\n#### This default permission set includes:\n\n- `allow-is-available`\n- `allow-set-active`\n- `allow-set-tool`\n- `allow-clear`\n- `allow-set-excluded-rects`\n- `allow-configure-tools`\n- `allow-sync-undo-redo`\n- `allow-register-listener`\n- `allow-remove-listener`"
+          "markdownDescription": "Default permissions for the PencilKit plugin.\nAllows setting active state, configuring tools, and clearing drawing.\n\n#### This default permission set includes:\n\n- `allow-is-available`\n- `allow-set-active`\n- `allow-set-tool`\n- `allow-clear`\n- `allow-set-excluded-rects`\n- `allow-configure-tools`\n- `allow-sync-undo-redo`\n- `allow-ack-rendered`\n- `allow-register-listener`\n- `allow-remove-listener`"
         }
       ]
     }

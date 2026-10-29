@@ -13,6 +13,7 @@ permissions = [
   "allow-set-excluded-rects",
   "allow-configure-tools",
   "allow-sync-undo-redo",
+  "allow-ack-rendered",
   "allow-register-listener",
   "allow-remove-listener",
 ]
