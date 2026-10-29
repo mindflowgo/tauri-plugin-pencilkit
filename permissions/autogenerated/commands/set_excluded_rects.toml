@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-set-excluded-rects"
+description = "Enables the set_excluded_rects command without any pre-configured scope."
+commands.allow = ["set_excluded_rects"]
+
+[[permission]]
+identifier = "deny-set-excluded-rects"
+description = "Denies the set_excluded_rects command without any pre-configured scope."
+commands.deny = ["set_excluded_rects"]

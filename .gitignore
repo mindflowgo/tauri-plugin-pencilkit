@@ -1,0 +1,6 @@
+target/
+node_modules/
+.git/
+.build/
+.tauri/
+.DS_Store

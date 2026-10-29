@@ -1,0 +1,18 @@
+"$schema" = "schemas/schema.json"
+[default]
+description = """
+Default permissions for the PencilKit plugin.
+Allows setting active state, configuring tools, and clearing drawing.
+"""
+
+permissions = [
+  "allow-is-available",
+  "allow-set-active",
+  "allow-set-tool",
+  "allow-clear",
+  "allow-set-excluded-rects",
+  "allow-configure-tools",
+  "allow-sync-undo-redo",
+  "allow-register-listener",
+  "allow-remove-listener",
+]
