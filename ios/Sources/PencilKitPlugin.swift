@@ -879,9 +879,8 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
             self.activeMarkupTool = toolName
             self.activeMarkupColor = colorName
 
-            // Extract width scaled to author coordinates and opacity from inking tool
-            let scale = self.currentTargetWidth > 0 ? (self.currentAuthorWidth / self.currentTargetWidth) : 1.0
-            toolWidth = Double(inkingTool.width * scale)
+            // Pass back the exact width the user selected in the native PKToolPicker
+            toolWidth = Double(inkingTool.width)
 
             var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 1.0
             if inkingTool.color.getRed(&r, green: &g, blue: &b, alpha: &a) {
@@ -1101,8 +1100,9 @@ public class PencilKitPlugin: Plugin, PKCanvasViewDelegate, PKToolPickerObserver
         if validPointsCount > 0 {
             let avgWidth = totalWidth / CGFloat(validPointsCount)
             if avgWidth > 0 {
-                // Width scaled to author px coordinates
-                strokeDict["width"] = Double(avgWidth * scale)
+                // Pass back the actual width selected and drawn in PencilKit
+                strokeDict["width"] = Double(avgWidth)
+                strokeDict["rawWidth"] = Double(avgWidth)
             }
         }
 
